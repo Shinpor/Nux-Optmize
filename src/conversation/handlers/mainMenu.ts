@@ -1,12 +1,39 @@
 import { ConversationState } from '../states.js';
 import type { HandlerContext, HandlerResult } from '../states.js';
-import { listUpcomingSessions } from '../../momence/client.js';
-import { db } from '../../db/client.js';
-import { botBookings } from '../../db/schema.js';
-import { and, asc, eq, gt } from 'drizzle-orm';
+import { listUpcomingSessions, listMemberUpcomingSessions } from '../../momence/client.js';
 import { MAIN_MENU_TEXT, formatClassList, formatMyBookingsList } from '../formatting.js';
+import type { DisplayBooking } from '../formatting.js';
 
 const LISTING_DAYS_AHEAD = 7;
+
+export async function handleViewBookingsRequest(ctx: HandlerContext): Promise<HandlerResult> {
+  if (!ctx.momenceCustomerId) {
+    return { nextState: ConversationState.MAIN_MENU, nextContext: {}, messages: [MAIN_MENU_TEXT] };
+  }
+
+  const memberSessions = await listMemberUpcomingSessions(Number(ctx.momenceCustomerId), {
+    startAfter: new Date(),
+  });
+
+  const bookings: DisplayBooking[] = memberSessions
+    .filter((item) => item.cancelledAt === null)
+    .map((item) => ({
+      id: String(item.id),
+      className: item.session.name,
+      startsAt: item.session.startsAt,
+    }));
+
+  const { text, options } = formatMyBookingsList(bookings);
+  const bookingDetails = Object.fromEntries(
+    bookings.map((booking) => [booking.id, { className: booking.className, startsAtIso: booking.startsAt }]),
+  );
+
+  return {
+    nextState: ConversationState.LISTING_MY_BOOKINGS,
+    nextContext: { bookingOptions: options, bookingDetails },
+    messages: [text],
+  };
+}
 
 export async function handleMainMenu(ctx: HandlerContext): Promise<HandlerResult> {
   const choice = ctx.text.trim();
@@ -33,25 +60,7 @@ export async function handleMainMenu(ctx: HandlerContext): Promise<HandlerResult
   }
 
   if (choice === '2') {
-    const bookings = await db
-      .select()
-      .from(botBookings)
-      .where(
-        and(
-          eq(botBookings.studentId, ctx.studentId),
-          eq(botBookings.status, 'CONFIRMED'),
-          gt(botBookings.classStartsAt, new Date()),
-        ),
-      )
-      .orderBy(asc(botBookings.classStartsAt));
-
-    const { text, options } = formatMyBookingsList(bookings);
-
-    return {
-      nextState: ConversationState.LISTING_MY_BOOKINGS,
-      nextContext: { bookingOptions: options },
-      messages: [text],
-    };
+    return handleViewBookingsRequest(ctx);
   }
 
   return {

@@ -2,7 +2,7 @@
   "name": "nux-optmize",
   "version": "0.1.0",
   "private": true,
-  "description": "Bot de WhatsApp (Twilio) para agendamento de reservas na Nux House integrado ao Momence.",
+  "description": "Bot de WhatsApp (Cloud API da Meta) para agendamento de reservas na Nux House integrado ao Momence.",
   "type": "module",
   "engines": {
     "node": ">=20"
@@ -10,7 +10,7 @@
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.json",
-    "start": "node dist/index.js",
+    "start": "npm run db:migrate && node dist/index.js",
     "lint": "eslint .",
     "test": "vitest run",
     "db:generate": "drizzle-kit generate",
@@ -18,14 +18,13 @@
     "jobs:reminders:once": "tsx src/jobs/sendReminders.ts"
   },
   "dependencies": {
-    "@fastify/formbody": "^8.0.2",
     "dotenv": "^16.4.5",
     "drizzle-orm": "^0.36.4",
     "fastify": "^5.1.0",
     "node-cron": "^3.0.3",
     "pg": "^8.13.1",
     "pino": "^9.5.0",
-    "twilio": "^5.3.7",
+    "tsx": "^4.19.2",
     "zod": "^3.23.8"
   },
   "devDependencies": {
@@ -35,7 +34,6 @@
     "drizzle-kit": "^0.28.1",
     "eslint": "^9.16.0",
     "pino-pretty": "^13.0.0",
-    "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "typescript-eslint": "^8.17.0",
     "vitest": "^2.1.8"

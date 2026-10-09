@@ -6,6 +6,7 @@ const env = loadEnv();
 
 interface CachedToken {
   accessToken: string;
+  refreshToken: string;
   expiresAt: number; // epoch ms
 }
 
@@ -14,40 +15,81 @@ let cachedToken: CachedToken | undefined;
 // Margem de seguranca para renovar o token antes de expirar de fato.
 const EXPIRY_SAFETY_MARGIN_MS = 60_000;
 
-/**
- * Retorna um access token valido, renovando via OAuth2 client_credentials
- * quando necessario. A URL/grant_type abaixo sao os assumidos para a API
- * Momence (client_credentials) - confirmar contra api.docs.momence.com.
- */
-export async function getAccessToken(): Promise<string> {
-  const now = Date.now();
-  if (cachedToken && cachedToken.expiresAt - EXPIRY_SAFETY_MARGIN_MS > now) {
-    return cachedToken.accessToken;
-  }
+function basicAuthHeader(): string {
+  const raw = `${env.MOMENCE_CLIENT_ID}:${env.MOMENCE_CLIENT_SECRET}`;
+  return `Basic ${Buffer.from(raw).toString('base64')}`;
+}
 
-  const response = await fetch(env.MOMENCE_OAUTH_TOKEN_URL, {
+async function requestToken(body: URLSearchParams): Promise<CachedToken> {
+  const response = await fetch(`${env.MOMENCE_API_BASE_URL}/auth/token`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      grant_type: 'client_credentials',
-      client_id: env.MOMENCE_CLIENT_ID,
-      client_secret: env.MOMENCE_CLIENT_SECRET,
-    }),
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      Authorization: basicAuthHeader(),
+    },
+    body,
   });
 
   if (!response.ok) {
-    const body = await response.text().catch(() => undefined);
-    logger.error({ status: response.status, body }, 'Falha ao obter token OAuth2 do Momence');
-    throw new MomenceAuthError('Falha ao autenticar com a API do Momence', response.status, body);
+    const responseBody = await response.text().catch(() => undefined);
+    logger.error({ status: response.status, body: responseBody }, 'Falha ao autenticar com a API do Momence');
+    throw new MomenceAuthError('Falha ao autenticar com a API do Momence', response.status, responseBody);
   }
 
-  const data = (await response.json()) as { access_token: string; expires_in: number };
-
-  cachedToken = {
-    accessToken: data.access_token,
-    expiresAt: now + data.expires_in * 1000,
+  const data = (await response.json()) as {
+    access_token: string;
+    refresh_token: string;
+    expires_in: number;
   };
 
+  return {
+    accessToken: data.access_token,
+    refreshToken: data.refresh_token,
+    expiresAt: Date.now() + data.expires_in * 1000,
+  };
+}
+
+function loginWithPassword(): Promise<CachedToken> {
+  return requestToken(
+    new URLSearchParams({
+      grant_type: 'password',
+      username: env.MOMENCE_USERNAME,
+      password: env.MOMENCE_PASSWORD,
+    }),
+  );
+}
+
+function refreshAccessToken(refreshToken: string): Promise<CachedToken> {
+  return requestToken(
+    new URLSearchParams({
+      grant_type: 'refresh_token',
+      refresh_token: refreshToken,
+    }),
+  );
+}
+
+/**
+ * Retorna um access token valido. Usa cache em memoria e renova via
+ * refresh_token quando expirado; se a renovacao falhar, faz login
+ * completo de novo com usuario/senha.
+ */
+export async function getAccessToken(opts?: { forceRefresh?: boolean }): Promise<string> {
+  const now = Date.now();
+
+  if (!opts?.forceRefresh && cachedToken && cachedToken.expiresAt - EXPIRY_SAFETY_MARGIN_MS > now) {
+    return cachedToken.accessToken;
+  }
+
+  if (cachedToken?.refreshToken) {
+    try {
+      cachedToken = await refreshAccessToken(cachedToken.refreshToken);
+      return cachedToken.accessToken;
+    } catch (error) {
+      logger.warn({ error }, 'Falha ao renovar token do Momence via refresh_token, fazendo login completo');
+    }
+  }
+
+  cachedToken = await loginWithPassword();
   return cachedToken.accessToken;
 }
 

@@ -22,6 +22,7 @@ export const conversationStates = pgTable('conversation_states', {
   whatsappPhone: text('whatsapp_phone').primaryKey(),
   currentState: text('current_state').notNull(),
   context: jsonb('context').notNull().default({}),
+  botPausedUntil: timestamp('bot_paused_until', { withTimezone: true }),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -43,6 +44,7 @@ export const botBookings = pgTable(
       .notNull()
       .references(() => students.id),
     momenceSessionId: text('momence_session_id').notNull(),
+    className: text('class_name'),
     classStartsAt: timestamp('class_starts_at', { withTimezone: true }).notNull(),
     status: text('status', { enum: ['CONFIRMED', 'CANCELLED'] })
       .notNull()
@@ -57,6 +59,6 @@ export const botBookings = pgTable(
 );
 
 export const inboundMessageLog = pgTable('inbound_message_log', {
-  twilioMessageSid: text('twilio_message_sid').primaryKey(),
+  whatsappMessageId: text('whatsapp_message_id').primaryKey(),
   processedAt: timestamp('processed_at', { withTimezone: true }).notNull().defaultNow(),
 });

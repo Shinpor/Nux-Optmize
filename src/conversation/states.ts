@@ -17,10 +17,14 @@ export type ConversationStateValue =
   (typeof ConversationState)[keyof typeof ConversationState];
 
 export interface ConversationContext {
-  // Mapeia numero exibido ao aluno -> momence_session_id (fluxo de reserva/listagem)
+  // Mapeia numero exibido ao aluno -> momence session id (fluxo de reserva/listagem)
   classOptions?: Record<string, string>;
-  // Mapeia numero exibido ao aluno -> id da linha bot_bookings (fluxo de cancelamento)
+  // Detalhes da sessao (para exibir resumo/confirmacao), por momence session id
+  sessionDetails?: Record<string, { className: string; startsAtIso: string }>;
+  // Mapeia numero exibido ao aluno -> momence booking id (fluxo de cancelamento)
   bookingOptions?: Record<string, string>;
+  // Detalhes da reserva (para exibir resumo/confirmacao), por momence booking id
+  bookingDetails?: Record<string, { className: string; startsAtIso: string }>;
   // Sessao escolhida durante o fluxo de reserva, antes da confirmacao final
   selectedSessionId?: string;
   // Reserva escolhida durante o fluxo de cancelamento, antes da confirmacao final

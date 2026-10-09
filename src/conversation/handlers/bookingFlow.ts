@@ -1,19 +1,19 @@
 import { ConversationState } from '../states.js';
 import type { HandlerContext, HandlerResult } from '../states.js';
-import { createBooking, getMemberActivePackages } from '../../momence/client.js';
+import { listMemberUpcomingSessions } from '../../momence/client.js';
+import { bookSessionForMember, MomenceBookingUnavailableError } from '../../momence/booking.js';
+import { MomenceSessionFullError } from '../../momence/errors.js';
 import { db } from '../../db/client.js';
 import { botBookings } from '../../db/schema.js';
-import { and, eq } from 'drizzle-orm';
 import { MAIN_MENU_TEXT, formatSessionDateTime } from '../formatting.js';
-import { sendApprovedTemplate } from '../../whatsapp/outboundMessenger.js';
-import { bookingConfirmationVariables } from '../../whatsapp/templates.js';
+import { sendFreeFormReply } from '../../whatsapp/outboundMessenger.js';
+
+type SessionDetails = Record<string, { className: string; startsAtIso: string }>;
 
 export async function handleListingClasses(ctx: HandlerContext): Promise<HandlerResult> {
   const choice = ctx.text.trim();
   const sessionId = ctx.context.classOptions?.[choice];
-  const details = sessionId
-    ? (ctx.context.sessionDetails as Record<string, { className: string; startsAtIso: string }> | undefined)?.[sessionId]
-    : undefined;
+  const details = sessionId ? (ctx.context.sessionDetails as SessionDetails | undefined)?.[sessionId] : undefined;
 
   if (!sessionId || !details) {
     return {
@@ -36,9 +36,7 @@ export async function handleListingClasses(ctx: HandlerContext): Promise<Handler
 export async function handleConfirmingBooking(ctx: HandlerContext): Promise<HandlerResult> {
   const answer = ctx.text.trim().toLowerCase();
   const sessionId = ctx.context.selectedSessionId;
-  const details = sessionId
-    ? (ctx.context.sessionDetails as Record<string, { className: string; startsAtIso: string }> | undefined)?.[sessionId]
-    : undefined;
+  const details = sessionId ? (ctx.context.sessionDetails as SessionDetails | undefined)?.[sessionId] : undefined;
 
   if (answer !== 'sim' || !sessionId || !details || !ctx.momenceCustomerId) {
     return {
@@ -48,50 +46,55 @@ export async function handleConfirmingBooking(ctx: HandlerContext): Promise<Hand
     };
   }
 
-  const activePackages = await getMemberActivePackages(ctx.momenceCustomerId);
-  if (activePackages.length === 0) {
+  const memberId = Number(ctx.momenceCustomerId);
+  const numericSessionId = Number(sessionId);
+
+  const existingSessions = await listMemberUpcomingSessions(memberId, { startAfter: new Date() });
+  const alreadyBooked = existingSessions.some(
+    (item) => item.session.id === numericSessionId && item.cancelledAt === null,
+  );
+
+  if (alreadyBooked) {
     return {
       nextState: ConversationState.MAIN_MENU,
       nextContext: {},
-      messages: [
-        'Você não tem créditos ou pacote ativo para reservar essa aula. Fale com a recepção para renovar seu plano.',
-        MAIN_MENU_TEXT,
-      ],
+      messages: ['Você já tem uma reserva nessa aula. ' + MAIN_MENU_TEXT],
     };
   }
 
-  const existing = await db
-    .select()
-    .from(botBookings)
-    .where(
-      and(
-        eq(botBookings.studentId, ctx.studentId),
-        eq(botBookings.momenceSessionId, sessionId),
-        eq(botBookings.status, 'CONFIRMED'),
-      ),
-    )
-    .limit(1);
+  try {
+    const { sessionBookingId } = await bookSessionForMember({ memberId, sessionId: numericSessionId });
 
-  if (existing.length === 0) {
-    const booking = await createBooking({ memberId: ctx.momenceCustomerId, sessionId });
     await db.insert(botBookings).values({
-      momenceBookingId: booking.id,
+      momenceBookingId: String(sessionBookingId),
       studentId: ctx.studentId,
       momenceSessionId: sessionId,
+      className: details.className,
       classStartsAt: new Date(details.startsAtIso),
       status: 'CONFIRMED',
       confirmationSentAt: new Date(),
     });
+  } catch (error) {
+    if (error instanceof MomenceBookingUnavailableError) {
+      return {
+        nextState: ConversationState.MAIN_MENU,
+        nextContext: {},
+        messages: [`Não foi possível reservar: ${error.message}. Fale com a recepção se precisar de ajuda.`, MAIN_MENU_TEXT],
+      };
+    }
+    if (error instanceof MomenceSessionFullError) {
+      return {
+        nextState: ConversationState.MAIN_MENU,
+        nextContext: {},
+        messages: ['Essa aula acabou de lotar. Confira os horários de novo. ' + MAIN_MENU_TEXT],
+      };
+    }
+    throw error;
   }
 
-  await sendApprovedTemplate(
+  await sendFreeFormReply(
     ctx.whatsappPhone,
-    'BOOKING_CONFIRMATION',
-    bookingConfirmationVariables({
-      studentName: ctx.studentName ?? 'aluno(a)',
-      className: details.className,
-      startsAtFormatted: formatSessionDateTime(details.startsAtIso),
-    }),
+    `Reserva confirmada: "${details.className}" - ${formatSessionDateTime(details.startsAtIso)}. Te esperamos na Nux House! 💪`,
   );
 
   return {

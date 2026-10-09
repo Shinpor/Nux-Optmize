@@ -8,17 +8,22 @@ const envSchema = z.object({
 
   DATABASE_URL: z.string().min(1),
 
-  TWILIO_ACCOUNT_SID: z.string().min(1),
-  TWILIO_AUTH_TOKEN: z.string().min(1),
-  TWILIO_WHATSAPP_NUMBER: z.string().min(1),
-  TWILIO_BOOKING_CONFIRMATION_TEMPLATE_SID: z.string().min(1),
-  TWILIO_CLASS_REMINDER_TEMPLATE_SID: z.string().min(1),
-
   MOMENCE_CLIENT_ID: z.string().min(1),
   MOMENCE_CLIENT_SECRET: z.string().min(1),
+  MOMENCE_USERNAME: z.string().min(1),
+  MOMENCE_PASSWORD: z.string().min(1),
   MOMENCE_API_BASE_URL: z.string().url().default('https://api.momence.com/api/v2'),
-  MOMENCE_OAUTH_TOKEN_URL: z.string().url().default('https://api.momence.com/oauth/token'),
-  MOMENCE_HOST_ID: z.string().optional(),
+  LATE_CANCEL_HOURS: z.coerce.number().int().positive().default(12),
+
+  WHATSAPP_ACCESS_TOKEN: z.string().min(1),
+  WHATSAPP_PHONE_NUMBER_ID: z.string().min(1),
+  WHATSAPP_BUSINESS_ACCOUNT_ID: z.string().min(1),
+  WHATSAPP_APP_SECRET: z.string().min(1),
+  WHATSAPP_VERIFY_TOKEN: z.string().min(1),
+  WHATSAPP_GRAPH_API_VERSION: z.string().default('v24.0'),
+  WHATSAPP_TEMPLATE_LANGUAGE: z.string().default('pt_BR'),
+  WHATSAPP_TEMPLATE_CLASS_REMINDER: z.string().default('lembrete_aula'),
+  HUMAN_TAKEOVER_MINUTES: z.coerce.number().int().positive().default(120),
 
   REMINDER_CHECK_INTERVAL_MINUTES: z.coerce.number().int().positive().default(15),
   REMINDER_LEAD_TIME_MINUTES: z.coerce.number().int().positive().default(120),

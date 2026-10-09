@@ -3,8 +3,8 @@ import { db, pool } from '../db/client.js';
 import { botBookings, students } from '../db/schema.js';
 import { loadEnv } from '../config/env.js';
 import { logger } from '../shared/logger.js';
-import { sendApprovedTemplate } from '../whatsapp/outboundMessenger.js';
-import { classReminderVariables } from '../whatsapp/templates.js';
+import { sendClassReminderTemplate } from '../whatsapp/outboundMessenger.js';
+import { listMemberUpcomingSessions } from '../momence/client.js';
 import { formatSessionDateTime } from '../conversation/formatting.js';
 
 const env = loadEnv();
@@ -33,6 +33,12 @@ async function releaseReminderClaim(bookingId: string, attempts: number): Promis
     .where(eq(botBookings.id, bookingId));
 }
 
+async function wasCancelledOnMomence(momenceCustomerId: string, momenceBookingId: string): Promise<boolean> {
+  const upcoming = await listMemberUpcomingSessions(Number(momenceCustomerId), { startAfter: new Date() });
+  const match = upcoming.find((item) => item.id === Number(momenceBookingId));
+  return !match || match.cancelledAt !== null;
+}
+
 export async function runReminderJob(): Promise<void> {
   const now = new Date();
   const leadTimeEnd = new Date(now.getTime() + env.REMINDER_LEAD_TIME_MINUTES * 60 * 1000);
@@ -40,6 +46,8 @@ export async function runReminderJob(): Promise<void> {
   const dueBookings = await db
     .select({
       id: botBookings.id,
+      momenceBookingId: botBookings.momenceBookingId,
+      className: botBookings.className,
       classStartsAt: botBookings.classStartsAt,
       reminderAttempts: botBookings.reminderAttempts,
       studentId: botBookings.studentId,
@@ -66,20 +74,25 @@ export async function runReminderJob(): Promise<void> {
 
     try {
       const [student] = await db.select().from(students).where(eq(students.id, booking.studentId)).limit(1);
-      if (!student) {
+      if (!student?.momenceCustomerId) {
         logger.warn({ bookingId: booking.id }, 'Aluno nao encontrado para lembrete, pulando.');
         continue;
       }
 
-      await sendApprovedTemplate(
-        student.whatsappPhone,
-        'CLASS_REMINDER',
-        classReminderVariables({
-          studentName: student.name ?? 'aluno(a)',
-          className: 'sua aula',
-          startsAtFormatted: formatSessionDateTime(booking.classStartsAt),
-        }),
-      );
+      if (await wasCancelledOnMomence(student.momenceCustomerId, booking.momenceBookingId)) {
+        await db
+          .update(botBookings)
+          .set({ status: 'CANCELLED', cancelledAt: new Date() })
+          .where(eq(botBookings.id, booking.id));
+        logger.info({ bookingId: booking.id }, 'Reserva cancelada por outro canal, lembrete nao enviado.');
+        continue;
+      }
+
+      await sendClassReminderTemplate(student.whatsappPhone, {
+        studentName: student.name ?? 'aluno(a)',
+        className: booking.className ?? 'sua aula',
+        startsAtFormatted: formatSessionDateTime(booking.classStartsAt),
+      });
       sent += 1;
     } catch (error) {
       logger.error({ error, bookingId: booking.id }, 'Falha ao enviar lembrete, revertendo claim.');

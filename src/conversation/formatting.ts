@@ -1,5 +1,4 @@
 import type { MomenceSession } from '../momence/types.js';
-import type { botBookings } from '../db/schema.js';
 
 const dateFormatter = new Intl.DateTimeFormat('pt-BR', {
   weekday: 'short',
@@ -13,6 +12,10 @@ const dateFormatter = new Intl.DateTimeFormat('pt-BR', {
 export function formatSessionDateTime(iso: string | Date): string {
   const date = typeof iso === 'string' ? new Date(iso) : iso;
   return dateFormatter.format(date);
+}
+
+function formatSpots(spotsAvailable: number): string {
+  return spotsAvailable === Infinity ? 'vagas disponíveis' : `${spotsAvailable} vaga(s)`;
 }
 
 export function formatClassList(sessions: MomenceSession[]): {
@@ -30,7 +33,7 @@ export function formatClassList(sessions: MomenceSession[]): {
   const lines = sessions.map((session, index) => {
     const number = String(index + 1);
     options[number] = session.id;
-    return `${number}. ${session.className} - ${formatSessionDateTime(session.startsAt)} (${session.spotsAvailable} vaga(s))`;
+    return `${number}. ${session.className} - ${formatSessionDateTime(session.startsAt)} (${formatSpots(session.spotsAvailable)})`;
   });
 
   return {
@@ -44,9 +47,14 @@ export function formatClassList(sessions: MomenceSession[]): {
   };
 }
 
-type BotBooking = typeof botBookings.$inferSelect;
+/** Reserva formatada para exibicao, vinda diretamente do Momence (nao da bot_bookings local). */
+export interface DisplayBooking {
+  id: string;
+  className: string;
+  startsAt: string;
+}
 
-export function formatMyBookingsList(bookings: BotBooking[]): {
+export function formatMyBookingsList(bookings: DisplayBooking[]): {
   text: string;
   options: Record<string, string>;
 } {
@@ -61,7 +69,7 @@ export function formatMyBookingsList(bookings: BotBooking[]): {
   const lines = bookings.map((booking, index) => {
     const number = String(index + 1);
     options[number] = booking.id;
-    return `${number}. ${formatSessionDateTime(booking.classStartsAt)}`;
+    return `${number}. ${booking.className} - ${formatSessionDateTime(booking.startsAt)}`;
   });
 
   return {
@@ -82,3 +90,6 @@ export const MAIN_MENU_TEXT = [
   '',
   'Responda com o número da opção.',
 ].join('\n');
+
+export const GENERIC_ERROR_MESSAGE =
+  'Tive um problema agora, tente de novo em alguns minutos ou fale com a recepção.';

@@ -1,16 +1,20 @@
-import { sendFreeFormMessage, sendTemplateMessage } from './twilioClient.js';
-import { TEMPLATES, type TemplateKey } from './templates.js';
+import { sendWhatsAppText, sendWhatsAppTemplate } from './metaClient.js';
+import { CLASS_REMINDER_TEMPLATE_NAME, TEMPLATE_LANGUAGE, classReminderTemplateParams } from './templates.js';
 
-/** Resposta de fluxo conversacional normal (dentro da janela de 24h). */
+/** Resposta de fluxo conversacional normal (dentro da janela de 24h, texto livre). */
 export async function sendFreeFormReply(phone: string, text: string): Promise<void> {
-  await sendFreeFormMessage(phone, text);
+  await sendWhatsAppText(phone, text);
 }
 
-/** Mensagem iniciada pelo negocio (confirmacao/lembrete) via template aprovado. */
-export async function sendApprovedTemplate(
+/** Lembrete de aula, fora da janela de 24h, via template aprovado. */
+export async function sendClassReminderTemplate(
   phone: string,
-  templateKey: TemplateKey,
-  variables: Record<string, string>,
+  params: { studentName: string; className: string; startsAtFormatted: string },
 ): Promise<void> {
-  await sendTemplateMessage(phone, TEMPLATES[templateKey], variables);
+  await sendWhatsAppTemplate(
+    phone,
+    CLASS_REMINDER_TEMPLATE_NAME,
+    TEMPLATE_LANGUAGE,
+    classReminderTemplateParams(params),
+  );
 }

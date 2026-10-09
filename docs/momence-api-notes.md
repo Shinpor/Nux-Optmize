@@ -1,75 +1,78 @@
-# Notas sobre a API do Momence — PRECISA SER VALIDADO
+# Notas sobre a API do Momence
 
-> **Status: provisório.** Não foi possível acessar `https://api.docs.momence.com`
-> no ambiente onde este projeto foi iniciado (a política de rede do ambiente
-> bloqueou o host). Os nomes de endpoint usados em `src/momence/client.ts` e
-> `src/momence/authClient.ts` são **suposições razoáveis** baseadas em
-> relatos de terceiros sobre a API Momence v2 (Host API / Member API, OAuth2
-> client_credentials, base `https://api.momence.com/api/v2`), não na
-> documentação oficial.
+Endpoints reais da Host API do Momence (`https://api.momence.com/api/v2`),
+conferidos contra `https://api.docs.momence.com` e o schema OpenAPI em
+`https://static.momence.com/schema/api-v2-schema.yaml`. Consulte o schema
+sempre que tiver dúvida sobre algum campo.
 
-## O que precisa ser confirmado antes de ir para produção
+## Autenticação
 
-Acesse `https://api.docs.momence.com` com as credenciais reais (client_id/secret
-já habilitados) e confirme/ajuste:
+- `POST /auth/token`, `Content-Type: application/x-www-form-urlencoded`.
+- Credenciais do cliente de API (criado em Dashboard → Profile → Public
+  API clients) vão por **HTTP Basic** (`client_id` como usuário,
+  `client_secret` como senha).
+- Login: `grant_type=password&username=<email do staff>&password=<senha>`
+  — precisa ser um **usuário da equipe** com acesso ao Host Dashboard; a
+  API segue as mesmas permissões do dashboard.
+- Renovação: `grant_type=refresh_token&refresh_token=<refresh_token>`
+  (mesmo Basic auth). Se falhar, login completo de novo.
+- Em 401, o cliente (`src/momence/client.ts`) renova o token e repete a
+  chamada uma única vez.
 
-1. **Autenticação OAuth2**
-   - URL exata do endpoint de token (hoje assumido como `/oauth/token` na raiz
-     do domínio, não sob `/api/v2`).
-   - `grant_type` suportado (assumido `client_credentials`).
-   - Scopes necessários para Host API vs Member API.
-   - Ajustar em: `src/momence/authClient.ts`, variável `MOMENCE_OAUTH_TOKEN_URL`.
+## Listar aulas futuras
 
-2. **Listar sessões/aulas futuras com vagas**
-   - Endpoint real (assumido `GET /sessions?from=...&to=...&hostId=...`).
-   - Nome dos campos de resposta (assumido `id`, `className`, `startsAt`,
-     `instructor`, `spotsAvailable` — provavelmente os nomes reais são
-     diferentes, ex: `sessionId`, `name`, `startTime`, `availableSpots`).
-   - Ajustar em: `src/momence/client.ts` (`listUpcomingSessions`) e
-     `src/momence/types.ts` (`MomenceSession`).
+`GET /host/sessions?page&pageSize=200&sortBy=startsAt&sortOrder=ASC&startAfter&startBefore`
 
-3. **Buscar cliente (member) por telefone/e-mail**
-   - Endpoint real (assumido `GET /members?phone=...` / `?email=...`).
-   - Formato de telefone esperado (E.164 com ou sem `+`?).
-   - Ajustar em: `src/momence/client.ts` (`findMemberByPhoneOrEmail`).
+- Resposta paginada: `{ pagination: {page,pageSize,totalCount}, payload: HostSessionDto[] }`.
+- Campos de `HostSessionDto`: `id, name, type, startsAt, endsAt, durationInMinutes, capacity (ou null), bookingCount, teacher {id,firstName,lastName}, isCancelled, isDraft, inPersonLocation {id,name}`.
+- Descartamos aulas com `isCancelled` ou `isDraft`.
+- `spotsAvailable` não existe na API — calculado como `capacity == null ? Infinity : capacity - bookingCount`.
 
-4. **Checar créditos/pacote ativo do cliente**
-   - Endpoint real (assumido `GET /members/{id}/packages`).
-   - Como identificar "crédito disponível para esta aula específica" —
-     pacotes podem ser restritos por tipo de aula/local, o que o MVP atual
-     não modela.
-   - Ajustar em: `src/momence/client.ts` (`getMemberActivePackages`).
+## Identificar o aluno (telefone ou e-mail)
 
-5. **Criar reserva (booking)**
-   - Endpoint real (assumido `POST /bookings` com `{ memberId, sessionId }`).
-   - Contrato de erro quando não há crédito ou a aula está cheia (assumido
-     422 = sem crédito, 409 = aula cheia — **validar os códigos reais**).
-   - Ajustar em: `src/momence/client.ts` (`createBooking`) e
-     `src/momence/errors.ts` (`mapMomenceError`).
+`POST /host/members/list` com `{ page, pageSize, query }` (busca por texto
+livre). Campos de `HostMemberDto`: `id, firstName, lastName, email, phoneNumber (pode ser null)`.
 
-6. **Cancelar reserva**
-   - Endpoint real (assumido `POST /bookings/{id}/cancel`).
-   - Política de cancelamento (prazo mínimo antes da aula, se a API já
-     impõe isso ou se o bot precisa validar).
-   - Ajustar em: `src/momence/client.ts` (`cancelBooking`).
+- Telefone: tentamos a variante com e sem o 9º dígito e, por fim, só os
+  últimos 8 dígitos (`src/shared/phone.ts`), sempre filtrando o resultado
+  localmente comparando o telefone normalizado antes de aceitar o match.
+- E-mail: comparamos `email` em minúsculas, exatamente.
+- Mais de um resultado válido → pedimos o e-mail ao aluno.
 
-7. **Paginação e rate limits**
-   - Confirmar se `listUpcomingSessions` precisa paginar para estúdios com
-     muitas aulas/dia.
+## Reservar aula (checkout em 3 chamadas)
 
-8. **Outgoing webhooks (opcional, não usado no MVP)**
-   - Feature experimental, desabilitada por padrão — precisa ser habilitada
-     pelo suporte do Momence e configurada no dashboard (gera um secret para
-     validação de assinatura HMAC, mostrado apenas uma vez).
-   - Não é necessária para o MVP atual (que opera por consulta direta via
-     `listUpcomingSessions`), mas pode futuramente substituir o polling por
-     eventos em tempo real (nova reserva, cancelamento, aula criada).
+1. `POST /host/checkout/compatible-memberships` `{memberId, items:[{id:"1",type:"session",sessionId}]}` → `items[]` com `boughtMembership` ou `incompatibility`. Usamos o primeiro item sem `incompatibility`.
+2. `POST /host/checkout/prices` (mesmo payload + `paymentMethods`) → `itemsWithPrices[0].priceInCurrencyWithTax`.
+3. `POST /host/checkout` (mesmo payload + `attemptedPriceInCurrency` do passo 2) → `purchasedItems[0].sessionBookingId`, salvo como `bot_bookings.momence_booking_id`.
 
-## Como atualizar este projeto após ler a doc oficial
+Erros tratados (`src/momence/errors.ts`, mapeados pelo campo `type` do
+corpo, não pelo status HTTP — todos vêm como 400):
+`err-session-is-full`, `err-incompatible-membership`, `err-payment-failed`.
 
-1. Edite `src/momence/types.ts` com os nomes reais de campo.
-2. Edite `src/momence/client.ts` com os paths/métodos reais.
-3. Edite `src/momence/errors.ts` com os códigos de erro reais.
-4. Rode `npm run build` e os testes para garantir que nada mais referencia
-   os nomes antigos.
-5. Atualize este arquivo removendo o aviso de "provisório" do topo.
+Não usamos `POST /host/sessions/{id}/bookings/free` (não consome crédito).
+
+## Cancelar reserva
+
+`DELETE /host/session-bookings/{bookingId}` com corpo obrigatório
+`{refund: true, disableNotifications: false, isLateCancellation: <bool>}`.
+
+`isLateCancellation` é calculado em `src/momence/booking.ts` a partir de
+`LATE_CANCEL_HOURS` (padrão 12h) — o aluno é avisado **antes** de
+confirmar o cancelamento se estiver dentro desse prazo.
+
+## "Minhas reservas"
+
+`GET /host/members/{memberId}/sessions?page=0&pageSize=50&sortBy=startsAt&sortOrder=ASC&startAfter=<ISO agora>`
+— cada item traz `{id (bookingId), cancelledAt, session{id,name,startsAt,...}}`.
+Ignoramos itens com `cancelledAt != null`. Essa é a fonte da verdade para
+listar e cancelar (não a tabela local `bot_bookings`, que serve só de
+registro para os lembretes).
+
+## Pontos a confirmar em produção
+
+- Formato exato de `startAfter`/`startBefore` (a doc não especifica o
+  formato de data aceito) — usamos `Date#toISOString()` (ISO 8601 UTC);
+  validar contra o ambiente real.
+- Se `refund: true` de fato devolve o crédito do pacote, e se o Momence já
+  aplica sua própria regra de cancelamento tardio independente da nossa
+  (`LATE_CANCEL_HOURS` é só um aviso ao aluno, não uma regra do Momence).
